@@ -1,0 +1,5 @@
+{
+  "name": "AI Content Generator",
+  "description": "An application to upload documents and automatically generate multimedia content packages including images, scripts, and text overlays using the Gemini API. All assets are stored locally in the browser.",
+  "requestFramePermissions": []
+}
