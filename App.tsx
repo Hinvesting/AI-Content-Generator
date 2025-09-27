@@ -5,16 +5,18 @@ import { FileUpload } from './components/FileUpload';
 import { SettingsModal } from './components/SettingsModal';
 import { SceneCard } from './components/SceneCard';
 import { parseDocument } from './services/parsingService';
-import { generateImage, MISSING_GEMINI_KEY_ERROR } from './services/geminiService';
+import { generateImage, MISSING_GEMINI_KEY_ERROR, generateFeaturedImagePrompt, extractKeywords } from './services/geminiService';
 import * as storage from './services/storageService';
 import { AppSettings, ParsedDocument, DocType, Scene, GeneratedImages, LoadingStates, VisualCue } from './types';
 import { DEFAULT_SETTINGS } from './constants';
-import { SettingsIcon, DownloadIcon, LoadingSpinner, MagicIcon, TrashIcon } from './components/icons';
+import { SettingsIcon, DownloadIcon, LoadingSpinner, MagicIcon, TrashIcon, SearchIcon } from './components/icons';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import * as apiKeyService from './services/apiKeyService';
+// Fix: Corrected typo in constant name from MISSING_PEXels_KEY_ERROR to MISSING_PEXELS_KEY_ERROR.
 import { searchPexelsVideos, MISSING_PEXELS_KEY_ERROR } from './services/pexelsService';
 import { VisualCueCard } from './components/VisualCueCard';
+import { PexelsResultsModal } from './components/PexelsResultsModal';
 
 
 const downloadImage = (base64Image: string, fileName: string) => {
@@ -36,6 +38,12 @@ const App: React.FC = () => {
   const [previewingImage, setPreviewingImage] = useState<{ image: string; text?: string; downloadName: string } | null>(null);
   const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
   const [missingApiKeys, setMissingApiKeys] = useState<apiKeyService.ApiKeyName[]>([]);
+  
+  const [isBlogPexelsModalOpen, setIsBlogPexelsModalOpen] = useState(false);
+  const [isBlogSearchingPexels, setIsBlogSearchingPexels] = useState(false);
+  const [blogPexelsResults, setBlogPexelsResults] = useState<{ id: number; url: string }[]>([]);
+  const [blogPexelsError, setBlogPexelsError] = useState<string | null>(null);
+  const [blogPexelsQuery, setBlogPexelsQuery] = useState('');
 
   const promptForApiKeys = useCallback((keys: apiKeyService.ApiKeyName[]) => {
     if (keys.length > 0) {
@@ -73,8 +81,10 @@ const App: React.FC = () => {
     }
   };
   
-  // Fix: Per Gemini API guidelines, do not handle Gemini API key via UI.
-  const handleSaveApiKeys = (keys: { pexels?: string }) => {
+  const handleSaveApiKeys = (keys: { gemini?: string; pexels?: string }) => {
+    if (keys.gemini) {
+        apiKeyService.saveApiKey('GEMINI', keys.gemini);
+    }
     if (keys.pexels) {
         apiKeyService.saveApiKey('PEXELS', keys.pexels);
     }
@@ -106,8 +116,8 @@ const App: React.FC = () => {
       });
     } catch (e) {
       if (e instanceof Error && e.message === MISSING_GEMINI_KEY_ERROR) {
-        // Fix: Per Gemini API guidelines, do not prompt for the key. It must be an environment variable.
-        setError("Gemini API key not configured. Please set the API_KEY environment variable and refresh.");
+        promptForApiKeys(['GEMINI']);
+        setError("Your Gemini API key is missing or invalid. Please provide it.");
       } else {
         console.error(e);
         setError(`Failed to generate image for ${key}. Please try again.`);
@@ -134,6 +144,28 @@ const App: React.FC = () => {
     }
   }
 
+  const handleGenerateFeaturedImage = async () => {
+    if (!parsedDoc) return;
+    const key = 'featured-image';
+    setLoading(prev => ({ ...prev, [key]: true }));
+    setError(null);
+    try {
+        const prompt = await generateFeaturedImagePrompt(parsedDoc.rawContent);
+        // Using 16:9 for featured images, which is a common ratio
+        await handleGenerate(key, prompt, { ...settings, aspectRatio: '16:9' });
+    } catch (e) {
+        if (e instanceof Error && e.message === MISSING_GEMINI_KEY_ERROR) {
+            promptForApiKeys(['GEMINI']);
+            setError("Your Gemini API key is missing or invalid. Please provide it.");
+        } else {
+            console.error(e);
+            setError(`Failed to generate featured image. Please try again.`);
+        }
+        // Ensure loading is turned off on error, as handleGenerate's finally won't run.
+        setLoading(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
   const handleUpdateScene = (sceneNumber: number, updatedScene: Partial<Scene>) => {
     setParsedDoc(prevDoc => {
       if (!prevDoc) return null;
@@ -159,12 +191,41 @@ const App: React.FC = () => {
         const results = await searchPexelsVideos(query);
         return results;
     } catch (error) {
+        // Fix: Corrected typo in constant name from MISSING_PEXels_KEY_ERROR to MISSING_PEXELS_KEY_ERROR.
         if (error instanceof Error && error.message === MISSING_PEXELS_KEY_ERROR) {
             promptForApiKeys(['PEXELS']);
             return { error: 'Your Pexels API key is missing or invalid. Please provide it.' };
         }
         console.error("Failed to search Pexels:", error);
         return { error: error instanceof Error ? error.message : "An unknown error occurred." };
+    }
+  };
+  
+  const handleBlogPexelsSearch = async () => {
+    if (!parsedDoc) return;
+    setIsBlogPexelsModalOpen(true);
+    setIsBlogSearchingPexels(true);
+    setBlogPexelsError(null);
+    setBlogPexelsResults([]);
+    try {
+        const keywords = await extractKeywords(parsedDoc.rawContent);
+        setBlogPexelsQuery(keywords);
+        const response = await handlePexelsSearch(keywords);
+        if ('error' in response) {
+            setBlogPexelsError(response.error);
+        } else {
+            setBlogPexelsResults(response);
+        }
+    } catch(e) {
+        if (e instanceof Error && e.message === MISSING_GEMINI_KEY_ERROR) {
+            promptForApiKeys(['GEMINI']);
+            setBlogPexelsError("Your Gemini API key is missing or invalid. Please provide it.");
+        } else {
+            console.error(e);
+            setBlogPexelsError(e instanceof Error ? e.message : 'An unknown error occurred.');
+        }
+    } finally {
+        setIsBlogSearchingPexels(false);
     }
   };
 
@@ -199,6 +260,11 @@ const App: React.FC = () => {
     if (generatedImages.transparent) {
       const extrasFolder = zip.folder("extras");
       extrasFolder?.file("sam_stacks_transparent.png", generatedImages.transparent, { base64: true });
+    }
+
+    // Add featured image
+    if (generatedImages['featured-image']) {
+      zip.file("featured_image.png", generatedImages['featured-image'], { base64: true });
     }
 
     const content = await zip.generateAsync({ type: "blob" });
@@ -263,12 +329,60 @@ const App: React.FC = () => {
       case DocType.ARTICLE:
       case DocType.BLOG:
         return (
-          <div className="bg-slate-800 rounded-lg p-6 shadow-lg">
-            <h3 className="text-xl font-semibold text-blue-300 mb-4">{parsedDoc.docType} Content</h3>
-            <h4 className="text-2xl font-bold mb-2">{parsedDoc.title}</h4>
-            <p className="text-sm text-gray-400 mb-4">Topic: {parsedDoc.topic}</p>
-            <pre className="whitespace-pre-wrap font-sans text-gray-300 bg-slate-900 p-4 rounded-md">{parsedDoc.rawContent}</pre>
-          </div>
+          <>
+            <div className="bg-slate-800 rounded-lg p-6 shadow-lg">
+              <h3 className="text-xl font-semibold text-blue-300 mb-4">{parsedDoc.docType} Content</h3>
+              <h4 className="text-2xl font-bold mb-2">{parsedDoc.title}</h4>
+              <p className="text-sm text-gray-400 mb-4">Topic: {parsedDoc.topic}</p>
+              <pre className="whitespace-pre-wrap font-sans text-gray-300 bg-slate-900 p-4 rounded-md">{parsedDoc.rawContent}</pre>
+            </div>
+            <div className="bg-slate-800 rounded-lg p-6 shadow-lg">
+                <h3 className="text-xl font-semibold text-blue-300 mb-4">Assets</h3>
+                <div className="space-y-6">
+                    {/* Featured Image Section */}
+                    <div>
+                        <h4 className="text-lg font-semibold mb-2">Featured Image</h4>
+                          <div 
+                            className={`w-full aspect-video bg-slate-700 rounded-md flex items-center justify-center overflow-hidden mb-4 ${generatedImages['featured-image'] ? 'cursor-pointer' : ''}`}
+                              onClick={() => generatedImages['featured-image'] && setPreviewingImage({
+                                image: generatedImages['featured-image']!,
+                                downloadName: 'featured_image.png'
+                            })}
+                        >
+                            {loading['featured-image'] ? <LoadingSpinner className="w-10 h-10 text-blue-500" />
+                            : generatedImages['featured-image'] ? <img src={`data:image/png;base64,${generatedImages['featured-image']}`} alt="Featured Image" className="w-full h-full object-cover" />
+                            : <p className="text-gray-500 text-sm text-center p-4">Generate a featured image for the article.</p>}
+                        </div>
+                        <div className="flex gap-2">
+                              <button onClick={handleGenerateFeaturedImage} disabled={loading['featured-image']} className="w-full flex items-center justify-center px-4 py-2 bg-brand-secondary text-white font-semibold rounded-md hover:bg-blue-600 disabled:bg-slate-600">
+                                {loading['featured-image'] ? <LoadingSpinner className="w-5 h-5 mr-2" /> : <MagicIcon className="w-5 h-5 mr-2" />}
+                                {generatedImages['featured-image'] ? 'Regenerate' : 'Generate'}
+                            </button>
+                            {generatedImages['featured-image'] && !loading['featured-image'] && (
+                                <button onClick={() => downloadImage(generatedImages['featured-image']!, 'featured_image.png')} className="p-2 bg-slate-600 text-white rounded-md hover:bg-slate-500 transition-colors">
+                                    <DownloadIcon className="w-5 h-5" />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    {/* Pexels Search Section */}
+                    <div>
+                        <h4 className="text-lg font-semibold mb-2">Stock Footage Ideas</h4>
+                        <p className="text-sm text-gray-400 mb-3">
+                            Generate keywords from the article to search for relevant stock videos on Pexels.
+                        </p>
+                        <button
+                            onClick={handleBlogPexelsSearch}
+                            disabled={isBlogSearchingPexels}
+                            className="w-full flex items-center justify-center px-4 py-2 bg-amber-600 text-white font-semibold rounded-md hover:bg-amber-700 disabled:bg-slate-600 transition-colors"
+                        >
+                            {isBlogSearchingPexels ? <LoadingSpinner className="w-5 h-5 mr-2" /> : <SearchIcon className="w-5 h-5 mr-2" />}
+                            Search Pexels with Keywords
+                        </button>
+                    </div>
+                </div>
+            </div>
+          </>
         )
       default:
         return <p className="text-center text-yellow-400">Unsupported document type.</p>;
@@ -290,6 +404,15 @@ const App: React.FC = () => {
         onReset={handleResetSettings}
       />
       
+      <PexelsResultsModal
+        isOpen={isBlogPexelsModalOpen}
+        onClose={() => setIsBlogPexelsModalOpen(false)}
+        results={blogPexelsResults}
+        query={blogPexelsQuery}
+        isLoading={isBlogSearchingPexels}
+        error={blogPexelsError}
+      />
+
       {previewingImage && (
         <ImagePreviewModal
           image={previewingImage.image}

@@ -43,3 +43,51 @@ export const generateImage = async (
     throw error;
   }
 };
+
+export const generateFeaturedImagePrompt = async (articleContent: string): Promise<string> => {
+    const apiKey = getApiKey('GEMINI');
+    if (!apiKey) {
+        throw new Error(MISSING_GEMINI_KEY_ERROR);
+    }
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `Based on the following article content, generate a concise, visually descriptive prompt for an AI image generator to create a compelling featured image. The prompt should capture the essence of the article. Article content: "${articleContent.substring(0, 2000)}..."`;
+    
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        return response.text.trim();
+    } catch (error) {
+        console.error("Error generating featured image prompt:", error);
+        if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('400'))) {
+            throw new Error(MISSING_GEMINI_KEY_ERROR);
+        }
+        throw error;
+    }
+};
+
+export const extractKeywords = async (articleContent: string): Promise<string> => {
+    const apiKey = getApiKey('GEMINI');
+    if (!apiKey) {
+        throw new Error(MISSING_GEMINI_KEY_ERROR);
+    }
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `Extract 3-5 relevant keywords from the following article content, suitable for searching a stock video/image library like Pexels. Return the keywords as a single comma-separated string. Article content: "${articleContent.substring(0, 2000)}..."`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+        });
+        return response.text.trim();
+    } catch (error) {
+        console.error("Error extracting keywords:", error);
+        if (error instanceof Error && (error.message.includes('API key not valid') || error.message.includes('400'))) {
+            throw new Error(MISSING_GEMINI_KEY_ERROR);
+        }
+        throw error;
+    }
+};

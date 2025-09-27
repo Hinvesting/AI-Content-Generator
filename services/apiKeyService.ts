@@ -1,32 +1,43 @@
 
 
+
+const GEMINI_API_KEY_NAME = 'gemini_api_key';
 const PEXELS_API_KEY_NAME = 'pexels_api_key';
 
 export type ApiKeyName = 'GEMINI' | 'PEXELS';
 
 export const saveApiKey = (keyName: ApiKeyName, keyValue: string): void => {
-  // Fix: Per Gemini API guidelines, do not handle API key via UI.
-  if (keyName === 'GEMINI') {
-    return;
+  let storageKey: string;
+  switch (keyName) {
+    case 'GEMINI':
+      storageKey = GEMINI_API_KEY_NAME;
+      break;
+    case 'PEXELS':
+      storageKey = PEXELS_API_KEY_NAME;
+      break;
+    default:
+      return;
   }
 
-  // Handle Pexels key storage
   if (!keyValue) {
-    sessionStorage.removeItem(PEXELS_API_KEY_NAME);
+    sessionStorage.removeItem(storageKey);
   } else {
-    sessionStorage.setItem(PEXELS_API_KEY_NAME, keyValue);
+    sessionStorage.setItem(storageKey, keyValue);
   }
 };
 
 export const getApiKey = (keyName: ApiKeyName): string | null => {
-  // Fix: Per Gemini API guidelines, API key must be obtained exclusively from process.env.API_KEY.
+  // Prioritize session storage for user-provided keys.
   if (keyName === 'GEMINI') {
+    const sessionKey = sessionStorage.getItem(GEMINI_API_KEY_NAME);
+    if (sessionKey) {
+      return sessionKey;
+    }
+    // Fallback to environment variables if available.
     return process.env.API_KEY || null;
   }
 
-  // Pexels key logic
   if (keyName === 'PEXELS') {
-    // Prioritize session storage for user-provided keys.
     const sessionKey = sessionStorage.getItem(PEXELS_API_KEY_NAME);
     if (sessionKey) {
       return sessionKey;
@@ -40,7 +51,9 @@ export const getApiKey = (keyName: ApiKeyName): string | null => {
 
 export const getMissingKeys = (): ApiKeyName[] => {
     const missing: ApiKeyName[] = [];
-    // Fix: Per Gemini API guidelines, assume key is present in environment and do not prompt user.
+    if (!getApiKey('GEMINI')) {
+        missing.push('GEMINI');
+    }
     if (!getApiKey('PEXELS')) {
         missing.push('PEXELS');
     }
