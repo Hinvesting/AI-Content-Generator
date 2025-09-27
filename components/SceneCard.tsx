@@ -147,7 +147,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({ scene, onGenerate, onUpdat
            <button
                 onClick={handlePexelsSearch}
                 disabled={isSearchingPexels || !localScene.pexelsSearch}
-                className="p-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors"
+                className="flex-shrink-0 p-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors"
                 title="Search Pexels for videos"
             >
                 <SearchIcon className="w-5 h-5" />
@@ -155,7 +155,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({ scene, onGenerate, onUpdat
           {generatedImage && !isLoading && (
             <button
                 onClick={handleDownload}
-                className="p-2 bg-slate-600 text-white rounded-md hover:bg-slate-500 transition-colors"
+                className="flex-shrink-0 p-2 bg-slate-600 text-white rounded-md hover:bg-slate-500 transition-colors"
                  title="Download Image"
             >
                 <DownloadIcon className="w-5 h-5" />
