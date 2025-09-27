@@ -1,6 +1,4 @@
 
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { SettingsModal } from './components/SettingsModal';
@@ -271,7 +269,13 @@ const App: React.FC = () => {
     const content = await zip.generateAsync({ type: "blob" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(content);
-    link.download = "ai_content_package.zip";
+    
+    // Sanitize the topic to create a valid filename.
+    const fileName = parsedDoc.topic
+      ? `${parsedDoc.topic.replace(/ /g, '_').replace(/[^a-zA-Z0-9_]/g, '')}.zip`
+      : 'ai_content_package.zip';
+    link.download = fileName;
+
     link.click();
     URL.revokeObjectURL(link.href);
 
