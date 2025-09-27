@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { SettingsModal } from './components/SettingsModal';
@@ -289,10 +290,11 @@ const App: React.FC = () => {
     if (!parsedDoc) return null;
 
     switch (parsedDoc.docType) {
+      case DocType.YOUTUBE_SHORT:
       case DocType.REELS:
         return (
           <div className="space-y-4">
-            <h3 className="text-xl font-semibold text-blue-300">Reels Content Package</h3>
+            <h3 className="text-xl font-semibold text-blue-300">{parsedDoc.docType} Content Package</h3>
             {parsedDoc.scenes.map(scene => (
               <SceneCard
                 key={scene.sceneNumber}
@@ -307,10 +309,11 @@ const App: React.FC = () => {
             ))}
           </div>
         );
+      case DocType.YOUTUBE_LONG_FORM:
       case DocType.PODCAST:
         return (
           <div className="space-y-4">
-            <h3 className="text-xl font-semibold text-blue-300">Podcast Visual Cues</h3>
+            <h3 className="text-xl font-semibold text-blue-300">{parsedDoc.docType} Visual Cues</h3>
             {parsedDoc.visualCues.map((cue, index) => (
               <VisualCueCard
                 key={index}

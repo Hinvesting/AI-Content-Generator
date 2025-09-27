@@ -4,7 +4,9 @@ export const parseDocument = (content: string): ParsedDocument => {
   const lines = content.split('\n').map(line => line.trim());
   let docType = DocType.UNKNOWN;
 
-  if (content.includes('Daily Content Package: Reels')) docType = DocType.REELS;
+  if (content.includes('Daily Content Package: YouTube Short')) docType = DocType.YOUTUBE_SHORT;
+  else if (content.includes('Daily Content Package: YouTube Long Form')) docType = DocType.YOUTUBE_LONG_FORM;
+  else if (content.includes('Daily Content Package: Reels')) docType = DocType.REELS;
   else if (content.includes('Podcast Script')) docType = DocType.PODCAST;
   else if (content.includes('Blog Post')) docType = DocType.BLOG;
   else if (content.includes('Article:')) docType = DocType.ARTICLE;
@@ -48,7 +50,7 @@ export const parseDocument = (content: string): ParsedDocument => {
   }
 
   const scenes: Scene[] = [];
-  if (docType === DocType.REELS) {
+  if (docType === DocType.REELS || docType === DocType.YOUTUBE_SHORT) {
     const sceneSections = content.split('Scene ');
     for (const section of sceneSections) {
       if (!/^\d+:/.test(section)) continue;
@@ -57,7 +59,7 @@ export const parseDocument = (content: string): ParsedDocument => {
       
       const backgroundPrompt = sceneContent.match(/1\. Background Prompt: (.*)/)?.[1]?.trim() || '';
       const textOverlay = sceneContent.match(/2\. Text Overlay: (.*)/)?.[1]?.trim() || '';
-      const pexelsSearch = sceneContent.match(/3\. Pexels Search: (.*)/)?.[1]?.trim() || '';
+      const pexelsSearch = sceneContent.match(/3\. (Pexels Search|Video Search Terms): (.*)/)?.[2]?.trim() || '';
 
       if (sceneNumber) {
         scenes.push({ sceneNumber, backgroundPrompt, textOverlay, pexelsSearch });
@@ -77,14 +79,54 @@ export const parseDocument = (content: string): ParsedDocument => {
     }
   }
 
+  if (docType === DocType.YOUTUBE_LONG_FORM) {
+    const visualCuesSection = getSection('Visual Cues (for Video Production)', 'Legal Disclaimer');
+    if (visualCuesSection) {
+        const cueLines = visualCuesSection.split('\n').map(l => l.trim()).filter(l => l);
+        let currentCue: Partial<VisualCue> & { cuePoint?: string } = {};
+
+        const commitCue = () => {
+            if (currentCue.cuePoint) {
+                 visualCues.push({
+                    cuePoint: currentCue.cuePoint || '',
+                    imageType: '',
+                    backgroundPrompt: currentCue.backgroundPrompt || '',
+                    purpose: currentCue.purpose || '',
+                    pexelsSearch: currentCue.backgroundPrompt || ''
+                });
+            }
+        };
+
+        for (const line of cueLines) {
+            const cuePointMatch = line.match(/\d+\.\s*Cue Point:\s*(.*)/);
+            const bgPromptMatch = line.match(/\d+\.\s*Background Prompt:\s*(.*)/);
+            const purposeMatch = line.match(/\d+\.\s*Purpose:\s*(.*)/);
+
+            if (cuePointMatch) {
+                commitCue(); // Commit the previous cue before starting a new one
+                currentCue = { cuePoint: cuePointMatch[1] };
+            } else if (bgPromptMatch) {
+                currentCue.backgroundPrompt = bgPromptMatch[1];
+            } else if (purposeMatch) {
+                currentCue.purpose = purposeMatch[1];
+            }
+        }
+        commitCue(); // Commit the last cue
+    }
+  }
+
+  let voiceoverScript = getSection('Voiceover Script', 'Visuals & Overlays');
+  if (!voiceoverScript) {
+      voiceoverScript = getSection('Full Script', 'Visual Cues (for Video Production)');
+  }
 
   return {
     docType,
     topic: getSimpleValue('Topic:'),
-    title: lines[0].includes(':') ? lines[0].split(':')[1]?.trim() : lines[0],
+    title: getSimpleValue('Title:') || (lines[0].includes(':') ? lines[0].split(':')[1]?.trim() : lines[0]),
     summary: getMultiLineValue('Summary', 'What is Digital Literacy'),
     quote: getSimpleValue('Quote:'),
-    voiceoverScript: getSection('Voiceover Script', 'Visuals & Overlays'),
+    voiceoverScript,
     scenes,
     visualCues,
     transparentImagePrompt: getSection('Transparent Sam Stacks Image Description', 'Social Media Details'),

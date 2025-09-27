@@ -18,6 +18,8 @@ export enum DocType {
   ARTICLE = 'Article',
   BLOG = 'Blog',
   PODCAST = 'Podcast',
+  YOUTUBE_SHORT = 'YouTube Short',
+  YOUTUBE_LONG_FORM = 'YouTube Long Form',
   UNKNOWN = 'Unknown',
 }
 
