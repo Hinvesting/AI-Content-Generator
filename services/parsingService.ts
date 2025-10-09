@@ -1,6 +1,78 @@
+
 import { ParsedDocument, Scene, VisualCue, DocType } from '../types';
 
+const parseParableFormat = (content: string): ParsedDocument => {
+    const getSectionContent = (startMarker: string, endMarker?: string): string => {
+        let section = content;
+        
+        const startIndex = section.indexOf(startMarker);
+        if (startIndex === -1) return '';
+        section = section.substring(startIndex + startMarker.length);
+        
+        if (endMarker) {
+            const endIndex = section.indexOf(endMarker);
+            if (endIndex !== -1) {
+                section = section.substring(0, endIndex);
+            }
+        }
+        
+        return section.replace(/_+\n/, '').trim().split('\n').filter(line => line.trim() !== '').join('\n');
+    };
+
+    const title = content.match(/🎬 Title: (.*)/)?.[1]?.trim() || 'Untitled Story';
+    
+    const scenes: Scene[] = [];
+    const sceneScriptSection = getSectionContent('🎬 Scene-by-Scene Script', '📱 YouTube Short Script');
+    const sceneBlocks = sceneScriptSection.split('Scene ');
+    
+    let fullVoiceover = '';
+
+    for (const block of sceneBlocks) {
+        if (!/^\d+/.test(block)) continue;
+        
+        const sceneNumber = parseInt(block.match(/^(\d+)/)![1], 10);
+        
+        const voMatch = block.match(/🎙️ VO:([\s\S]*?)(?=🖼️ Visual:|$)/);
+        const visualMatch = block.match(/🖼️ Visual:([\s\S]*)/);
+
+        const voiceover = voMatch ? voMatch[1].replace(/\n/g, ' ').trim() : '';
+        const visual = visualMatch ? visualMatch[1].replace(/\n/g, ' ').trim() : '';
+        
+        if (voiceover) {
+            fullVoiceover += `Scene ${sceneNumber}: ${voiceover}\n\n`;
+        }
+
+        if (visual) {
+            scenes.push({
+                sceneNumber: sceneNumber,
+                backgroundPrompt: visual,
+                textOverlay: voiceover,
+                pexelsSearch: visual.split('.')[0].split(',')[0].trim()
+            });
+        }
+    }
+
+    return {
+        docType: DocType.YOUTUBE_SHORT,
+        topic: title,
+        title: title,
+        summary: getSectionContent('📖 Full Parable Story', '🎬 Scene-by-Scene Script'),
+        quote: '',
+        voiceoverScript: fullVoiceover.trim(),
+        scenes: scenes,
+        visualCues: [],
+        transparentImagePrompt: getSectionContent('🖼️ Thumbnail Prompt', '⚖️ Disclaimer'),
+        rawContent: content,
+    };
+};
+
+
 export const parseDocument = (content: string): ParsedDocument => {
+  // Trim the content just for the check to handle potential BOM characters or leading whitespace.
+  if (content.trim().startsWith('🎬 Title:') && content.includes('🎬 Scene-by-Scene Script')) {
+      return parseParableFormat(content);
+  }
+
   const lines = content.split('\n').map(line => line.trim());
   let docType = DocType.UNKNOWN;
 

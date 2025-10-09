@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { FileUpload } from './components/FileUpload';
+import { ContentInput } from './components/ContentInput';
 import { SettingsModal } from './components/SettingsModal';
 import { SceneCard } from './components/SceneCard';
 import { parseDocument } from './services/parsingService';
@@ -67,7 +67,7 @@ const App: React.FC = () => {
 
   }, [promptForApiKeys]);
 
-  const handleFileUpload = (content: string) => {
+  const handleProcessContent = (content: string) => {
     handleClearAll();
     try {
       const doc = parseDocument(content);
@@ -471,7 +471,7 @@ const App: React.FC = () => {
             </div>
         )}
         {!parsedDoc ? (
-          <FileUpload onFileUpload={handleFileUpload} disabled={Object.values(loading).some(v => v)} />
+          <ContentInput onProcessContent={handleProcessContent} disabled={Object.values(loading).some(v => v)} />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">

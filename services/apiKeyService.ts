@@ -1,6 +1,4 @@
 
-
-
 const GEMINI_API_KEY_NAME = 'gemini_api_key';
 const PEXELS_API_KEY_NAME = 'pexels_api_key';
 
@@ -19,10 +17,11 @@ export const saveApiKey = (keyName: ApiKeyName, keyValue: string): void => {
       return;
   }
 
-  if (!keyValue) {
+  const trimmedValue = keyValue.trim();
+  if (!trimmedValue) {
     sessionStorage.removeItem(storageKey);
   } else {
-    sessionStorage.setItem(storageKey, keyValue);
+    sessionStorage.setItem(storageKey, trimmedValue);
   }
 };
 

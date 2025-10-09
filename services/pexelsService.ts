@@ -1,4 +1,3 @@
-
 import { getApiKey } from './apiKeyService';
 
 export const MISSING_PEXELS_KEY_ERROR = "MISSING_PEXELS_KEY";
@@ -21,7 +20,7 @@ export const searchPexelsVideos = async (query: string): Promise<{id: number, ur
         throw new Error(MISSING_PEXELS_KEY_ERROR);
     }
 
-    const response = await fetch(`https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=10`, {
+    const response = await fetch(`https://api.pexels.com/v1/videos/search?query=${encodeURIComponent(query)}&per_page=10`, {
         headers: {
             Authorization: pexelsApiKey,
         },
