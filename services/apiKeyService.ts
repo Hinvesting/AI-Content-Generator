@@ -1,8 +1,7 @@
-
 const GEMINI_API_KEY_NAME = 'gemini_api_key';
 const PEXELS_API_KEY_NAME = 'pexels_api_key';
 
-export type ApiKeyName = 'GEMINI' | 'PEXELS';
+export type ApiKeyName = 'GEMINI' | 'PEXELS' | 'GOOGLE_CLIENT_ID' | 'GOOGLE_API_KEY';
 
 export const saveApiKey = (keyName: ApiKeyName, keyValue: string): void => {
   let storageKey: string;
@@ -55,6 +54,12 @@ export const getMissingKeys = (): ApiKeyName[] => {
     }
     if (!getApiKey('PEXELS')) {
         missing.push('PEXELS');
+    }
+    if (!process.env.GOOGLE_CLIENT_ID) {
+        missing.push('GOOGLE_CLIENT_ID');
+    }
+    if (!process.env.GOOGLE_API_KEY) {
+        missing.push('GOOGLE_API_KEY');
     }
     return missing;
 }

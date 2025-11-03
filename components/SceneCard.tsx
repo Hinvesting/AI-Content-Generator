@@ -36,8 +36,12 @@ export const SceneCard: React.FC<SceneCardProps> = ({ scene, onGenerate, onUpdat
   }, [scene]);
 
   const handleGenerate = () => {
-    // PRD: Generate / Regenerate Image auto-appends Text Overlay + Pexels Search to Background Prompt.
-    const combinedPrompt = `${localScene.backgroundPrompt}. Text overlay: "${localScene.textOverlay}". Style hint from Pexels search: ${localScene.pexelsSearch}.`;
+    const combinedPrompt = [
+        localScene.backgroundPrompt,
+        localScene.actionPrompt,
+        `Style hint from Pexels search: ${localScene.pexelsSearch}`
+    ].filter(p => p && p.trim()).join('. ');
+
     onGenerate(localScene.sceneNumber, combinedPrompt);
   };
   
@@ -85,7 +89,7 @@ export const SceneCard: React.FC<SceneCardProps> = ({ scene, onGenerate, onUpdat
         <h4 className="text-lg font-bold text-blue-400">Scene {localScene.sceneNumber}</h4>
         
         <div>
-          <label className="text-xs font-semibold text-gray-400">Background Prompt</label>
+          <label className="text-xs font-semibold text-gray-400">Start Image Prompt</label>
           <textarea
             value={localScene.backgroundPrompt}
             onChange={(e) => handleInputChange('backgroundPrompt', e.target.value)}
@@ -94,6 +98,17 @@ export const SceneCard: React.FC<SceneCardProps> = ({ scene, onGenerate, onUpdat
           />
         </div>
         
+        <div>
+          <label className="text-xs font-semibold text-gray-400">Action Prompt</label>
+          <textarea
+            value={localScene.actionPrompt}
+            onChange={(e) => handleInputChange('actionPrompt', e.target.value)}
+            placeholder="e.g., close ups, orbit shots, drone shots..."
+            className="w-full p-2 mt-1 bg-slate-700 border border-slate-600 rounded-md text-sm focus:ring-2 focus:ring-blue-500"
+            rows={2}
+          />
+        </div>
+
         <div>
           <label className="text-xs font-semibold text-gray-400">Text Overlay</label>
           <input

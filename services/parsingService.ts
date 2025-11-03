@@ -1,4 +1,3 @@
-
 import { ParsedDocument, Scene, VisualCue, DocType } from '../types';
 
 const parseParableFormat = (content: string): ParsedDocument => {
@@ -23,15 +22,15 @@ const parseParableFormat = (content: string): ParsedDocument => {
     
     const scenes: Scene[] = [];
     const sceneScriptSection = getSectionContent('🎬 Scene-by-Scene Script', '📱 YouTube Short Script');
-    const sceneBlocks = sceneScriptSection.split('Scene ');
-    
-    let fullVoiceover = '';
+    const sceneRegex = /Scene\s+(\d+)([\s\S]*?)(?=Scene\s+\d+|$)/gi;
 
-    for (const block of sceneBlocks) {
-        if (!/^\d+/.test(block)) continue;
-        
-        const sceneNumber = parseInt(block.match(/^(\d+)/)![1], 10);
-        
+    let fullVoiceover = '';
+    let match;
+
+    while ((match = sceneRegex.exec(sceneScriptSection)) !== null) {
+        const sceneNumber = parseInt(match[1], 10);
+        const block = match[2];
+
         const voMatch = block.match(/🎙️ VO:([\s\S]*?)(?=🖼️ Visual:|$)/);
         const visualMatch = block.match(/🖼️ Visual:([\s\S]*)/);
 
@@ -46,6 +45,7 @@ const parseParableFormat = (content: string): ParsedDocument => {
             scenes.push({
                 sceneNumber: sceneNumber,
                 backgroundPrompt: visual,
+                actionPrompt: '',
                 textOverlay: voiceover,
                 pexelsSearch: visual.split('.')[0].split(',')[0].trim()
             });
@@ -66,101 +66,77 @@ const parseParableFormat = (content: string): ParsedDocument => {
     };
 };
 
-const parseHazeAiFormat = (content: string): ParsedDocument => {
-    const title = content.match(/\*\*Title:\*\*\s*(.*)/)?.[1]?.trim() || 'Untitled';
-    const thumbnailPrompt = content.match(/\*\*Thumbnail Image prompt:\*\*\s*([\s\S]*?)(?=\*\*Scene 1:\*\*|$)/)?.[1]?.trim() || '';
+export const parseVideoPackage = (files: { script: string; visuals: string; metadata: string; branding: string }): ParsedDocument => {
+    const { script, visuals, metadata } = files;
+
+    const titleMatch = metadata.match(/^Title: (.*)$/m);
+    const title = titleMatch ? titleMatch[1].trim() : 'Untitled Video';
+
+    const descriptionMatch = metadata.match(/^Description:\s*([\s\S]*?)(?=\n\d+:\d{2}|\nTags:|$)/m);
+    const summary = descriptionMatch ? descriptionMatch[1].trim() : '';
+
+    const thumbnailPromptMatch = metadata.match(/^Thumbnail Prompt: ([\s\S]*?)$/m);
+    const transparentImagePrompt = thumbnailPromptMatch ? thumbnailPromptMatch[1].trim() : '';
 
     const scenes: Scene[] = [];
-    const sceneBlocks = content.split(/\*\*\s*Scene\s+\d+:\s*\*\*/).slice(1);
-    let fullVoiceover = '';
+    const scriptSceneBlocks = script.split('---').filter(s => s.trim());
+    const visualSceneBlocks = visuals.split('====================').filter(s => s.trim());
+    
+    const sceneCount = Math.min(scriptSceneBlocks.length, visualSceneBlocks.length);
 
-    sceneBlocks.forEach((block, index) => {
-        const sceneNumber = index + 1;
-        
-        const backgroundPromptMatch = block.match(/^([\s\S]*?)\s*\*/);
-        const backgroundPrompt = backgroundPromptMatch ? backgroundPromptMatch[1].trim().replace(/\n/g, ' ') : '';
-        
-        const textOverlayMatch = block.match(/\*\s*\*\*Text Overlay:\*\*\s*(.*)/);
-        const textOverlay = textOverlayMatch ? textOverlayMatch[1].trim() : '';
+    for (let i = 0; i < sceneCount; i++) {
+        const scriptBlock = scriptSceneBlocks[i].trim();
+        const visualBlock = visualSceneBlocks[i].trim();
 
-        const voiceoverMatch = block.match(/\*\s*\*\*Voiceover:\*\*\s*"(.*?)"/s);
-        const voiceover = voiceoverMatch ? voiceoverMatch[1].trim() : '';
+        const sceneNumberMatch = scriptBlock.match(/^Scene\s+(\d+):/);
+        if (!sceneNumberMatch) continue;
+
+        const sceneNumber = parseInt(sceneNumberMatch[1], 10);
+
+        const voiceover = scriptBlock.substring(sceneNumberMatch[0].length).replace(/\n/g, ' ').trim();
+        const textOverlay = voiceover;
+
+        const pexelsSearchMatch = visualBlock.match(/^Stock Footage \(Primary\): (.*)$/m);
+        const pexelsSearch = pexelsSearchMatch ? pexelsSearchMatch[1].trim() : '';
         
-        if (voiceover) {
-            fullVoiceover += `Scene ${sceneNumber}: ${voiceover}\n\n`;
-        }
+        let backgroundPrompt = 'No cinematic prompt found.';
+        let actionPrompt = '';
         
-        if (backgroundPrompt || textOverlay) {
-            scenes.push({
-                sceneNumber,
-                backgroundPrompt,
-                textOverlay,
-                pexelsSearch: textOverlay || backgroundPrompt.split('.')[0]
-            });
+        const cinematicPromptsHeader = 'Cinematic Prompts:';
+        const cinematicPromptsIndex = visualBlock.indexOf(cinematicPromptsHeader);
+
+        if (cinematicPromptsIndex !== -1) {
+            const promptsText = visualBlock.substring(cinematicPromptsIndex + cinematicPromptsHeader.length).trim();
+            const allPrompts = promptsText.split('\n')
+                .map(p => p.trim())
+                .filter(p => p.startsWith('- '))
+                .map(p => p.substring(2).trim());
+
+            if (allPrompts.length > 0) {
+                backgroundPrompt = allPrompts[0];
+            }
+            if (allPrompts.length > 1) {
+                actionPrompt = allPrompts.slice(1).join(' ');
+            }
         }
-    });
+
+        scenes.push({ sceneNumber, textOverlay, backgroundPrompt, actionPrompt, pexelsSearch });
+    }
+
+    const fullVoiceover = scenes.map(s => `Scene ${s.sceneNumber}: ${s.textOverlay}`).join('\n\n');
+    const rawContent = `--- SCRIPT ---\n${script}\n--- VISUALS ---\n${visuals}\n--- METADATA ---\n${metadata}\n--- BRANDING ---\n${files.branding}`;
 
     return {
         docType: DocType.YOUTUBE_SHORT,
         topic: title,
-        title: title,
-        summary: '',
+        title,
+        summary,
         quote: '',
-        voiceoverScript: fullVoiceover.trim(),
-        scenes: scenes,
+        voiceoverScript: fullVoiceover,
+        scenes,
         visualCues: [],
-        transparentImagePrompt: thumbnailPrompt,
-        rawContent: content,
-    };
-};
-
-const parsePodcastSegmentFormat = (content: string): ParsedDocument => {
-    const title = content.match(/\[EPISODE TITLE\]:\s*(.*)/)?.[1]?.trim() || 'Untitled Podcast';
-    const summary = content.match(/\[KEY MESSAGE\/THEME\]:\s*([\s\S]*?)(?=\[SEGMENT 1:|$)/)?.[1]?.trim() || '';
-
-    const visualCues: VisualCue[] = [];
-    const segmentBlocks = content.split(/\[SEGMENT \d+:/).slice(1);
-    let fullScript = '';
-
-    segmentBlocks.forEach((block, index) => {
-        const cuePointMatch = block.match(/^(.*?)]/);
-        const cuePoint = cuePointMatch ? cuePointMatch[1].trim() : `Segment ${index + 1}`;
-        
-        const objectiveMatch = block.match(/\*\s*\*\*Objective:\*\*\s*([\s\S]*?)(?=\*\s*\*\*Content:\*\*|$)/);
-        const purpose = objectiveMatch ? objectiveMatch[1].trim() : '';
-
-        const contentMatch = block.match(/\*\s*\*\*Content:\*\*\s*"([\s\S]*?)"(?=\s*\* \*\*Host Image Prompt:\*\*|$)/);
-        const scriptSegment = contentMatch ? contentMatch[1].trim().replace(/\n/g, ' ') : '';
-        
-        const imagePromptMatch = block.match(/\*\s*\*\*Host Image Prompt:\*\*\s*([\s\S]*?)(?=\[SEGMENT|$)/);
-        const backgroundPrompt = imagePromptMatch ? imagePromptMatch[1].trim().replace(/\n/g, ' ') : '';
-
-        if(scriptSegment) {
-            fullScript += `${cuePoint}:\n${scriptSegment}\n\n`;
-        }
-
-        if(backgroundPrompt) {
-             visualCues.push({
-                cuePoint,
-                imageType: '',
-                backgroundPrompt,
-                purpose,
-                pexelsSearch: backgroundPrompt.split('.')[0].split(',')[0].trim()
-            });
-        }
-    });
-
-    return {
-        docType: DocType.PODCAST,
-        topic: title,
-        title: title,
-        summary: summary,
-        quote: '',
-        voiceoverScript: fullScript.trim(),
-        scenes: [],
-        visualCues: visualCues,
-        transparentImagePrompt: '',
-        rawContent: content,
+        transparentImagePrompt,
+        rawContent
     };
 };
 
@@ -168,17 +144,7 @@ const parsePodcastSegmentFormat = (content: string): ParsedDocument => {
 export const parseDocument = (content: string): ParsedDocument => {
   const trimmedContent = content.trim();
 
-  // New Haze AI Short Form Format Check
-  if (trimmedContent.startsWith('**Title:**') && trimmedContent.includes('**Scene 1:**')) {
-      return parseHazeAiFormat(content);
-  }
-  
-  // New Podcast/Long Form Segment Format Check
-  if (trimmedContent.startsWith('[EPISODE TITLE]:') && trimmedContent.includes('[SEGMENT 1:')) {
-      return parsePodcastSegmentFormat(content);
-  }
-
-  // Existing "Parable" Format Check
+  // Check for the original "Parable" format.
   if (trimmedContent.startsWith('🎬 Title:') && content.includes('🎬 Scene-by-Scene Script')) {
       return parseParableFormat(content);
   }
@@ -235,16 +201,17 @@ export const parseDocument = (content: string): ParsedDocument => {
   if (docType === DocType.REELS || docType === DocType.YOUTUBE_SHORT) {
     const sceneSections = content.split('Scene ');
     for (const section of sceneSections) {
-      if (!/^\d+:/.test(section)) continue;
-      const sceneNumber = parseInt(section.match(/^(\d+):/)?.[1] || '0', 10);
-      const sceneContent = section.substring(section.indexOf('\n'));
+      if (!section.trim() || !/^\d+:/.test(section.trim())) continue;
+      
+      const sceneNumber = parseInt(section.split(':')[0], 10);
+      const sceneContent = section.substring(section.indexOf(':') + 1).trim();
       
       const backgroundPrompt = sceneContent.match(/1\. Background Prompt: (.*)/)?.[1]?.trim() || '';
       const textOverlay = sceneContent.match(/2\. Text Overlay: (.*)/)?.[1]?.trim() || '';
       const pexelsSearch = sceneContent.match(/3\. (Pexels Search|Video Search Terms): (.*)/)?.[2]?.trim() || '';
 
       if (sceneNumber) {
-        scenes.push({ sceneNumber, backgroundPrompt, textOverlay, pexelsSearch });
+        scenes.push({ sceneNumber, backgroundPrompt, actionPrompt: '', textOverlay, pexelsSearch });
       }
     }
   }
@@ -252,48 +219,47 @@ export const parseDocument = (content: string): ParsedDocument => {
   const visualCues: VisualCue[] = [];
   if(docType === DocType.PODCAST) {
     const cueSections = content.split('Cue Point:');
-    for(const section of cueSections.slice(1)) {
-        const cuePoint = section.split('\n')[0].trim();
+    for (let i = 1; i < cueSections.length; i++) { // Start at 1 to skip content before the first cue
+        const section = cueSections[i];
+        if (!section.trim()) continue;
+
+        const sectionLines = section.trim().split('\n');
+        const cuePoint = sectionLines[0].trim();
         const imageType = section.match(/Image Type: (.*)/)?.[1]?.trim() || '';
         const backgroundPrompt = section.match(/Background Prompt: (.*)/)?.[1]?.trim() || '';
         const purpose = section.match(/Purpose: (.*)/)?.[1]?.trim() || '';
-        visualCues.push({ cuePoint, imageType, backgroundPrompt, purpose, pexelsSearch: '' });
+        if (cuePoint) {
+            visualCues.push({ cuePoint, imageType, backgroundPrompt, purpose, pexelsSearch: '' });
+        }
     }
   }
 
   if (docType === DocType.YOUTUBE_LONG_FORM) {
     const visualCuesSection = getSection('Visual Cues (for Video Production)', 'Legal Disclaimer');
-    if (visualCuesSection) {
-        const cueLines = visualCuesSection.split('\n').map(l => l.trim()).filter(l => l);
-        let currentCue: Partial<VisualCue> & { cuePoint?: string } = {};
+    const lines = visualCuesSection.split('\n').map(l => l.trim());
+    let currentCue: Partial<VisualCue> = {};
 
-        const commitCue = () => {
-            if (currentCue.cuePoint) {
-                 visualCues.push({
-                    cuePoint: currentCue.cuePoint || '',
-                    imageType: '',
-                    backgroundPrompt: currentCue.backgroundPrompt || '',
-                    purpose: currentCue.purpose || '',
-                    pexelsSearch: currentCue.backgroundPrompt || ''
-                });
+    for (const line of lines) {
+        if (/^\d+\.\s*Cue Point:/.test(line)) {
+            if (currentCue.cuePoint) { // Push the previously parsed cue
+                visualCues.push(currentCue as VisualCue);
             }
-        };
-
-        for (const line of cueLines) {
-            const cuePointMatch = line.match(/\d+\.\s*Cue Point:\s*(.*)/);
-            const bgPromptMatch = line.match(/\d+\.\s*Background Prompt:\s*(.*)/);
-            const purposeMatch = line.match(/\d+\.\s*Purpose:\s*(.*)/);
-
-            if (cuePointMatch) {
-                commitCue(); // Commit the previous cue before starting a new one
-                currentCue = { cuePoint: cuePointMatch[1] };
-            } else if (bgPromptMatch) {
-                currentCue.backgroundPrompt = bgPromptMatch[1];
-            } else if (purposeMatch) {
-                currentCue.purpose = purposeMatch[1];
+            currentCue = {
+                cuePoint: line.replace(/^\d+\.\s*Cue Point:/, '').trim(),
+                imageType: '',
+                pexelsSearch: ''
+            };
+        } else if (line.startsWith('Background Prompt:')) {
+            currentCue.backgroundPrompt = line.replace('Background Prompt:', '').trim();
+            if (currentCue.backgroundPrompt) {
+                 currentCue.pexelsSearch = currentCue.backgroundPrompt.split('.')[0].split(',')[0].trim() || currentCue.cuePoint || '';
             }
+        } else if (line.startsWith('Purpose:')) {
+            currentCue.purpose = line.replace('Purpose:', '').trim();
         }
-        commitCue(); // Commit the last cue
+    }
+    if (currentCue.cuePoint) { // Push the very last cue
+        visualCues.push(currentCue as VisualCue);
     }
   }
 

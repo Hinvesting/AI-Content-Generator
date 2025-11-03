@@ -1,22 +1,21 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { ContentInput } from './components/ContentInput';
 import { SettingsModal } from './components/SettingsModal';
 import { SceneCard } from './components/SceneCard';
-import { parseDocument } from './services/parsingService';
-import { generateImage, MISSING_GEMINI_KEY_ERROR, generateFeaturedImagePrompt, extractKeywords } from './services/geminiService';
+import { parseDocument, parseVideoPackage } from './services/parsingService';
+import { generateImage, MISSING_GEMINI_KEY_ERROR, generateFeaturedImagePrompt, extractKeywords, enhanceScriptForTTS, generateTransparentImage } from './services/geminiService';
 import * as storage from './services/storageService';
 import { AppSettings, ParsedDocument, DocType, Scene, GeneratedImages, LoadingStates, VisualCue } from './types';
 import { DEFAULT_SETTINGS } from './constants';
-import { SettingsIcon, DownloadIcon, LoadingSpinner, MagicIcon, TrashIcon, SearchIcon } from './components/icons';
+import { SettingsIcon, DownloadIcon, LoadingSpinner, MagicIcon, TrashIcon, SearchIcon, UploadIcon } from './components/icons';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
 import { ApiKeyModal } from './components/ApiKeyModal';
 import * as apiKeyService from './services/apiKeyService';
-// Fix: Corrected typo in constant name from MISSING_PEXels_KEY_ERROR to MISSING_PEXELS_KEY_ERROR.
+// Fix: Corrected typo from MISSING_PEXels_KEY_ERROR to MISSING_PEXELS_KEY_ERROR
 import { searchPexelsVideos, MISSING_PEXELS_KEY_ERROR } from './services/pexelsService';
 import { VisualCueCard } from './components/VisualCueCard';
 import { PexelsResultsModal } from './components/PexelsResultsModal';
-
+import * as driveService from './services/googleDriveService';
 
 const downloadImage = (base64Image: string, fileName: string) => {
   const link = document.createElement('a');
@@ -25,6 +24,15 @@ const downloadImage = (base64Image: string, fileName: string) => {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+};
+
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = error => reject(error);
+  });
 };
 
 const App: React.FC = () => {
@@ -43,6 +51,8 @@ const App: React.FC = () => {
   const [blogPexelsResults, setBlogPexelsResults] = useState<{ id: number; url: string }[]>([]);
   const [blogPexelsError, setBlogPexelsError] = useState<string | null>(null);
   const [blogPexelsQuery, setBlogPexelsQuery] = useState('');
+  
+  const [referenceImage, setReferenceImage] = useState<{b64: string; name: string} | null>(null);
 
   const promptForApiKeys = useCallback((keys: apiKeyService.ApiKeyName[]) => {
     if (keys.length > 0) {
@@ -53,16 +63,19 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const loadedSettings = storage.loadSettingsFromLocalStorage();
-    const loadedImages = storage.loadImagesFromLocalStorage();
     const loadedDoc = storage.loadDocumentFromLocalStorage();
     if (loadedSettings) setSettings(loadedSettings);
-    if (loadedImages) setGeneratedImages(loadedImages);
     if (loadedDoc) setParsedDoc(loadedDoc);
     
     // On initial load, check if keys are missing from session or env.
     setTimeout(() => {
         const missing = apiKeyService.getMissingKeys();
-        promptForApiKeys(missing);
+        if (missing.includes('GOOGLE_CLIENT_ID') || missing.includes('GOOGLE_API_KEY')) {
+            setError("Google Drive integration is not configured. Saving will be disabled.");
+        } else {
+            driveService.initGis();
+        }
+        promptForApiKeys(missing.filter(k => k !== 'GOOGLE_CLIENT_ID' && k !== 'GOOGLE_API_KEY') as apiKeyService.ApiKeyName[]);
     }, 100);
 
   }, [promptForApiKeys]);
@@ -80,6 +93,29 @@ const App: React.FC = () => {
     }
   };
   
+  const handleProcessVideoPackage = async (files: { script: string; visuals: string; metadata: string; branding: string }) => {
+    handleClearAll();
+    setLoading({ all: true });
+    setError(null);
+    try {
+        const doc = parseVideoPackage(files);
+        const enhancedScript = await enhanceScriptForTTS(doc.voiceoverScript);
+        const finalDoc = { ...doc, voiceoverScript: enhancedScript };
+        setParsedDoc(finalDoc);
+        storage.saveDocumentToLocalStorage(finalDoc);
+    } catch (e) {
+        if (e instanceof Error && e.message === MISSING_GEMINI_KEY_ERROR) {
+            promptForApiKeys(['GEMINI']);
+            setError("Your Gemini API key is missing or invalid. Please provide it.");
+        } else {
+            console.error("Error processing video package:", e);
+            setError("Failed to process video package. Please try again.");
+        }
+    } finally {
+        setLoading({ all: false });
+    }
+  };
+
   const handleSaveApiKeys = (keys: { gemini?: string; pexels?: string }) => {
     if (keys.gemini) {
         apiKeyService.saveApiKey('GEMINI', keys.gemini);
@@ -103,23 +139,28 @@ const App: React.FC = () => {
     setIsSettingsOpen(false);
   }
 
-  const handleGenerate = useCallback(async (key: string, prompt: string, imageSettings: AppSettings) => {
+  const handleGenerate = useCallback(async (key: string, base64Image: string) => {
+    setGeneratedImages(prev => ({ ...prev, [key]: base64Image }));
+  }, []);
+  
+  // Fix: Removed generic <T> to prevent TSX parsing errors. Using `any` as a workaround.
+  const executeGeneration = useCallback(async (
+    key: string,
+    generationFunc: () => Promise<any>,
+    onSuccess: (key: string, result: any) => void
+  ) => {
     setLoading(prev => ({ ...prev, [key]: true }));
     setError(null);
     try {
-      const base64Image = await generateImage(prompt, imageSettings);
-      setGeneratedImages(prev => {
-        const newImages = { ...prev, [key]: base64Image };
-        storage.saveImagesToLocalStorage(newImages);
-        return newImages;
-      });
+      const result = await generationFunc();
+      onSuccess(key, result);
     } catch (e) {
       if (e instanceof Error && e.message === MISSING_GEMINI_KEY_ERROR) {
         promptForApiKeys(['GEMINI']);
         setError("Your Gemini API key is missing or invalid. Please provide it.");
       } else {
         console.error(e);
-        setError(`Failed to generate image for ${key}. Please try again.`);
+        setError(`Failed to generate for ${key}. Please try again.`);
       }
     } finally {
       setLoading(prev => ({ ...prev, [key]: false }));
@@ -127,42 +168,43 @@ const App: React.FC = () => {
   }, [promptForApiKeys]);
 
   const handleGenerateScene = (sceneNumber: number, prompt: string) => {
-    handleGenerate(`scene-${sceneNumber}`, prompt, settings);
+    executeGeneration(
+        `scene-${sceneNumber}`, 
+        () => generateImage(prompt, settings), 
+        handleGenerate
+    );
   }
   
   const handleGenerateVisualCue = (cueIndex: number, prompt: string) => {
-    // Fix: Explicitly type cueSettings to prevent type widening on aspectRatio.
     const cueSettings: AppSettings = {...settings, aspectRatio: '16:9'}; // Podcast visuals are likely 16:9
-    handleGenerate(`cue-${cueIndex}`, prompt, cueSettings);
+    executeGeneration(
+        `cue-${cueIndex}`, 
+        () => generateImage(prompt, cueSettings), 
+        handleGenerate
+    );
   }
 
   const handleGenerateTransparent = () => {
     if (parsedDoc?.transparentImagePrompt) {
-      const transparentSettings: AppSettings = { ...settings, style: 'illustration', aspectRatio: '1:1' };
-      handleGenerate('transparent', parsedDoc.transparentImagePrompt, transparentSettings);
+      executeGeneration(
+          'transparent', 
+          () => generateTransparentImage(parsedDoc.transparentImagePrompt, referenceImage?.b64 ?? null),
+          handleGenerate
+      );
     }
   }
 
   const handleGenerateFeaturedImage = async () => {
     if (!parsedDoc) return;
     const key = 'featured-image';
-    setLoading(prev => ({ ...prev, [key]: true }));
-    setError(null);
-    try {
-        const prompt = await generateFeaturedImagePrompt(parsedDoc.rawContent);
-        // Using 16:9 for featured images, which is a common ratio
-        await handleGenerate(key, prompt, { ...settings, aspectRatio: '16:9' });
-    } catch (e) {
-        if (e instanceof Error && e.message === MISSING_GEMINI_KEY_ERROR) {
-            promptForApiKeys(['GEMINI']);
-            setError("Your Gemini API key is missing or invalid. Please provide it.");
-        } else {
-            console.error(e);
-            setError(`Failed to generate featured image. Please try again.`);
-        }
-        // Ensure loading is turned off on error, as handleGenerate's finally won't run.
-        setLoading(prev => ({ ...prev, [key]: false }));
-    }
+    await executeGeneration(
+        key,
+        async () => {
+            const prompt = await generateFeaturedImagePrompt(parsedDoc.rawContent);
+            return generateImage(prompt, { ...settings, aspectRatio: '16:9' });
+        },
+        handleGenerate
+    );
   };
 
   const handleUpdateScene = (sceneNumber: number, updatedScene: Partial<Scene>) => {
@@ -190,7 +232,6 @@ const App: React.FC = () => {
         const results = await searchPexelsVideos(query);
         return results;
     } catch (error) {
-        // Fix: Corrected typo in constant name from MISSING_PEXels_KEY_ERROR to MISSING_PEXELS_KEY_ERROR.
         if (error instanceof Error && error.message === MISSING_PEXELS_KEY_ERROR) {
             promptForApiKeys(['PEXELS']);
             return { error: 'Your Pexels API key is missing or invalid. Please provide it.' };
@@ -227,59 +268,34 @@ const App: React.FC = () => {
         setIsBlogSearchingPexels(false);
     }
   };
+  
+  const handleReferenceFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+        try {
+            const b64 = await fileToBase64(file);
+            setReferenceImage({ b64, name: file.name });
+        } catch (error) {
+            setError("Could not read the reference image file.");
+            console.error(error);
+        }
+    }
+  };
 
-  const handleSaveAll = async () => {
+  const handleSaveToDrive = async () => {
     if (!parsedDoc) return;
     setLoading(prev => ({ ...prev, all: true }));
-    // @ts-ignore
-    const zip = new JSZip();
-
-    // Add scripts
-    const scriptsFolder = zip.folder("scripts");
-    if(parsedDoc.voiceoverScript) scriptsFolder?.file("voiceover_script.txt", parsedDoc.voiceoverScript);
-    if(parsedDoc.docType === DocType.PODCAST) scriptsFolder?.file("podcast_script.txt", parsedDoc.rawContent);
-    if(parsedDoc.docType === DocType.ARTICLE || parsedDoc.docType === DocType.BLOG) scriptsFolder?.file("content.txt", parsedDoc.rawContent);
-
-
-    // Add images
-    const scenesFolder = zip.folder("scenes");
-    for (const key in generatedImages) {
-        if (key.startsWith('scene-')) {
-            scenesFolder?.file(`${key}.png`, generatedImages[key], { base64: true });
-        }
+    setError(null);
+    try {
+        const folderName = parsedDoc.topic ? parsedDoc.topic.replace(/ /g, '_').replace(/[^a-zA-Z0-9_]/g, '') : 'ai_content_package';
+        await driveService.uploadFilesToDrive(generatedImages, parsedDoc, folderName);
+        alert(`Successfully saved content to Google Drive folder: ${folderName}`);
+    } catch(err) {
+        console.error("Drive upload failed", err);
+        setError(err instanceof Error ? err.message : "An unknown error occurred while saving to Google Drive.");
+    } finally {
+        setLoading(prev => ({ ...prev, all: false }));
     }
-    const cuesFolder = zip.folder("visual_cues");
-    for (const key in generatedImages) {
-        if (key.startsWith('cue-')) {
-            cuesFolder?.file(`${key}.png`, generatedImages[key], { base64: true });
-        }
-    }
-
-    // Add transparent image
-    if (generatedImages.transparent) {
-      const extrasFolder = zip.folder("extras");
-      extrasFolder?.file("sam_stacks_transparent.png", generatedImages.transparent, { base64: true });
-    }
-
-    // Add featured image
-    if (generatedImages['featured-image']) {
-      zip.file("featured_image.png", generatedImages['featured-image'], { base64: true });
-    }
-
-    const content = await zip.generateAsync({ type: "blob" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(content);
-    
-    // Sanitize the topic to create a valid filename.
-    const fileName = parsedDoc.topic
-      ? `${parsedDoc.topic.replace(/ /g, '_').replace(/[^a-zA-Z0-9_]/g, '')}.zip`
-      : 'ai_content_package.zip';
-    link.download = fileName;
-
-    link.click();
-    URL.revokeObjectURL(link.href);
-
-    setLoading(prev => ({ ...prev, all: false }));
   };
 
   const handleClearAll = () => {
@@ -287,6 +303,7 @@ const App: React.FC = () => {
     setGeneratedImages({});
     setLoading({});
     setError(null);
+    setReferenceImage(null);
     storage.clearLocalStorage();
   }
 
@@ -436,12 +453,12 @@ const App: React.FC = () => {
             {parsedDoc && (
                 <>
                 <button
-                    onClick={handleSaveAll}
+                    onClick={handleSaveToDrive}
                     disabled={loading.all}
                     className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-green-600 rounded-md hover:bg-green-700 disabled:bg-slate-600 transition-colors"
                 >
                     {loading.all ? <LoadingSpinner className="w-5 h-5" /> : <DownloadIcon className="w-5 h-5" />}
-                    Save All
+                    Save to Drive
                 </button>
                 <button
                     onClick={handleClearAll}
@@ -471,7 +488,7 @@ const App: React.FC = () => {
             </div>
         )}
         {!parsedDoc ? (
-          <ContentInput onProcessContent={handleProcessContent} disabled={Object.values(loading).some(v => v)} />
+          <ContentInput onProcessContent={handleProcessContent} onProcessPackage={handleProcessVideoPackage} disabled={Object.values(loading).some(v => v)} />
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
@@ -489,9 +506,17 @@ const App: React.FC = () => {
                     )}
                 </div>
 
+                 <div className="bg-slate-800 rounded-lg p-6 shadow-lg">
+                    <h3 className="text-xl font-semibold text-blue-300 mb-4">Enhanced Voiceover Script</h3>
+                    <p className="text-xs text-gray-400 mb-2">This script has been enhanced with pauses for a text-to-speech engine.</p>
+                    <pre className="whitespace-pre-wrap font-sans text-gray-300 bg-slate-900 p-4 rounded-md max-h-60 overflow-y-auto text-sm">{parsedDoc.voiceoverScript}</pre>
+                 </div>
+
+
                 {parsedDoc.transparentImagePrompt && (
                     <div className="bg-slate-800 rounded-lg p-6 shadow-lg">
-                        <h3 className="text-xl font-semibold text-blue-300 mb-4">Transparent Image</h3>
+                        <h3 className="text-xl font-semibold text-blue-300 mb-2">Transparent Image</h3>
+                        <p className="text-xs text-gray-400 mb-4">Optionally upload a reference image for the AI to use as inspiration.</p>
                         <div 
                             className={`w-full aspect-square bg-slate-700 rounded-md flex items-center justify-center overflow-hidden mb-4 ${generatedImages.transparent ? 'cursor-pointer' : ''}`}
                              onClick={() => generatedImages.transparent && setPreviewingImage({
@@ -503,6 +528,21 @@ const App: React.FC = () => {
                             : generatedImages.transparent ? <img src={`data:image/png;base64,${generatedImages.transparent}`} alt="Transparent Sam Stacks" className="w-full h-full object-contain" />
                             : <p className="text-gray-500 text-sm text-center p-4">Generate the transparent branding image.</p>}
                         </div>
+
+                         <div className="mb-4">
+                            <label htmlFor="reference-upload" className="relative cursor-pointer bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-md transition-colors text-sm w-full flex items-center justify-center gap-2">
+                                <UploadIcon className="w-4 h-4"/>
+                                <span>{referenceImage ? 'Change Reference' : 'Add Reference Image'}</span>
+                                <input id="reference-upload" type="file" className="sr-only" accept="image/*" onChange={handleReferenceFileChange} />
+                            </label>
+                            {referenceImage && (
+                                <div className="mt-2 text-xs text-gray-400 text-center flex items-center justify-between">
+                                    <span className="truncate" title={referenceImage.name}>Using: {referenceImage.name}</span>
+                                    <button onClick={() => setReferenceImage(null)} className="ml-2 text-red-400 hover:text-red-300">&times;</button>
+                                </div>
+                            )}
+                        </div>
+
                         <div className="flex gap-2">
                              <button onClick={handleGenerateTransparent} disabled={loading.transparent} className="w-full flex items-center justify-center px-4 py-2 bg-brand-secondary text-white font-semibold rounded-md hover:bg-blue-600 disabled:bg-slate-600">
                                {loading.transparent ? <LoadingSpinner className="w-5 h-5 mr-2" /> : <MagicIcon className="w-5 h-5 mr-2" />}

@@ -1,6 +1,7 @@
 export interface Scene {
   sceneNumber: number;
   backgroundPrompt: string;
+  actionPrompt: string;
   textOverlay: string;
   pexelsSearch: string;
 }
